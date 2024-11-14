@@ -1,4 +1,4 @@
-use noters::{config::Config, error::Result, note::NotesManager};
+use noters::{config::Config, error::{Result, NoterError}, note::NotesManager};
 use std::env;
 
 fn main() -> Result<()> {
