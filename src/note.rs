@@ -68,19 +68,38 @@ impl NotesManager {
     pub fn edit_note(&self, id: i64) -> Result<()> {
         let note = self.db.get_note(id)?.ok_or_else(|| NoterError::NoteNotFound(id))?;
         let file_path = self.notes_dir.join(&note.filename);
-        
+
+        let encrypted_content = fs::read_to_string(&file_path)?;
+        let decrypted_content = self.crypto
+            .decrypt(&encrypted_content)
+            .map_err(|e| NoterError::Encryption(e.to_string()))?;
+
+        let temp_path = file_path.with_extension("temp");
+        fs::write(&temp_path, &decrypted_content)?;
+
         let editor = self.config.editor.clone()
             .or_else(|| std::env::var("EDITOR").ok())
             .ok_or_else(|| NoterError::EditorNotFound)?;
 
         let status = std::process::Command::new(editor)
-            .arg(&file_path)
+            .arg(&temp_path)
             .status()
             .map_err(|e| NoterError::EditorError(e.to_string()))?;
 
         if !status.success() {
+            fs::remove_file(&temp_path)?;
             return Err(NoterError::EditorError("Editor exited with non-zero status".to_string()));
         }
+
+        let modified_content = fs::read(&temp_path)?;
+
+        let encrypted = self.crypto
+            .encrypt(&modified_content)
+            .map_err(|e| NoterError::Encryption(e.to_string()))?;
+
+        fs::write(&file_path, encrypted)?;
+
+        fs::remove_file(&temp_path)?;
 
         Ok(())
     }
