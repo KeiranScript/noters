@@ -8,6 +8,9 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    #[arg(global = true, short, long)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -36,94 +39,108 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
-    env_logger::init();
+    let cli = Cli::parse();
+    
+    if cli.verbose {
+        env_logger::Builder::from_default_env()
+            .filter_level(log::LevelFilter::Info)
+            .init();
+    } else {
+        env_logger::init();
+    }
+
     let config = Config::load()?;
     let notes_manager = NotesManager::new(config)?;
 
-    let cli = Cli::parse();
-
     match cli.command {
         Some(Commands::New { title }) => {
-            let title = title.unwrap_or_else(|| noters::utils::get_input("Note title: "));
-            if let Some(extension) = std::path::Path::new(&title)
-                .extension()
-                .and_then(|ext| ext.to_str())
-            {
-                let title_without_ext = title.trim_end_matches(&format!(".{}", extension));
-                notes_manager.create_note(title_without_ext)?;
-            } else {
-                notes_manager.create_note(&title)?;
+            let title = title.unwrap_or_else(|| noters::utils::get_input("Note title: ").trim().to_string());
+            let title = title.trim();
+            if title.is_empty() {
+                println!("{}", "Error: Title cannot be empty".red());
+                return Ok(());
             }
-            println!("Note created successfully.");
+            
+            let title_without_ext = match std::path::Path::new(&title).extension() {
+                Some(ext) => title.trim_end_matches(&format!(".{}", ext.to_str().unwrap_or(""))),
+                None => title,
+            };
+            
+            notes_manager.create_note(title_without_ext)?;
+            println!("{}", "Note created successfully.".green());
         }
         Some(Commands::List) => {
             let notes = notes_manager.list_notes()?;
             if notes.is_empty() {
-                println!("No notes found.");
+                println!("{}", "No notes found.".yellow());
             } else {
                 for note in notes {
-                    println!("[{}] {} ({})", note.id, note.title, note.filename);
+                    println!("{} {} {}", 
+                        format!("[{}]", note.id).cyan(),
+                        note.title.bright_white(),
+                        format!("({})", note.filename).dimmed()
+                    );
                 }
             }
         }
         Some(Commands::Delete { id }) => {
             match notes_manager.delete_note(id)? {
-                true => println!("Note deleted successfully."),
-                false => println!("Note not found."),
+                true => println!("{}", "Note deleted successfully.".green()),
+                false => println!("{}", "Note not found.".red()),
             }
         }
         Some(Commands::Edit { id }) => {
             match notes_manager.edit_note(id) {
-                Ok(_) => println!("Note edited successfully."),
+                Ok(_) => println!("{}", "Note edited successfully.".green()),
                 Err(NoterError::EditorNotFound) => {
-                    println!("No editor configured. Set $EDITOR environment variable or specify 'editor' in config.toml");
+                    println!("{}", "No editor configured. Set $EDITOR environment variable or specify 'editor' in config.toml".red());
                 }
-                Err(NoterError::NoteNotFound(_)) => println!("Note not found."),
-                Err(e) => println!("Error editing note: {}", e),
+                Err(NoterError::NoteNotFound(_)) => println!("{}", "Note not found.".red()),
+                Err(e) => println!("{} {}", "Error editing note:".red(), e),
             }
         }
         Some(Commands::Export { dir }) => {
-            let export_dir = dir;
-
-            if let Some(ref dir) = export_dir {
+            if let Some(ref dir) = dir {
                 if !dir.exists() {
-                    if let Err(e) = std::fs::create_dir_all(dir) {
-                        println!("Failed to create export directory: {}", e);
-                        return Ok(());
-                    }
+                    std::fs::create_dir_all(dir).map_err(|e| {
+                        println!("{} {}", "Failed to create export directory:".red(), e);
+                        e
+                    })?;
                 } else if !dir.is_dir() {
-                    println!("Error: {} is not a directory", dir.display());
+                    println!("{} {}", "Error:".red(), format!("{} is not a directory", dir.display()));
                     return Ok(());
                 }
             }
 
-            match notes_manager.export_notes(export_dir.as_deref()) {
+            match notes_manager.export_notes(dir.as_deref()) {
                 Ok((success_count, total_count)) => {
                     if success_count == 0 && total_count == 0 {
-                        println!("No notes to export.");
+                        println!("{}", "No notes to export.".yellow());
                     } else if success_count == total_count {
-                        println!("Successfully exported all {} notes.", total_count);
+                        println!("{}", format!("Successfully exported all {} notes.", total_count).green());
                     } else {
-                        println!("Exported {}/{} notes successfully.", success_count, total_count);
-                        println!("Check the application logs for details about failed exports.");
+                        println!("{}", format!("Exported {}/{} notes successfully.", success_count, total_count).yellow());
+                        println!("{}", "Check the application logs for details about failed exports.".yellow());
                     }
                 }
-                Err(e) => println!("Error during export: {}", e),
+                Err(e) => println!("{} {}", "Error during export:".red(), e),
             }
         }
         Some(Commands::Search { query }) => {
             let results = notes_manager.search_notes(&query)?;
             if results.is_empty() {
-                println!("No matching notes found.");
+                println!("{}", "No matching notes found.".yellow());
             } else {
                 for note in results {
-                    println!("[{}] {} ({})", note.id, note.title, note.filename);
+                    println!("{} {} {}", 
+                        format!("[{}]", note.id).cyan(),
+                        note.title.bright_white(),
+                        format!("({})", note.filename).dimmed()
+                    );
                 }
             }
         }
-        None => {
-            print_usage();
-        }
+        None => print_usage(),
     }
 
     Ok(())
