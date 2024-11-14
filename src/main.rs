@@ -1,6 +1,7 @@
 use noters::{config::Config, error::{Result, NoterError}, note::NotesManager};
 use std::path::PathBuf;
 use std::env;
+use std::fs;
 
 fn main() -> Result<()> {
     env_logger::init();
@@ -29,22 +30,32 @@ fn main() -> Result<()> {
             println!("Note created successfully.");
         }
         Some("export") => {
-            let id: i64 = args.get(2)
-                .ok_or_else(|| {
-                    println!("Usage: noters export <id> [output_path]");
-                    NoterError::InvalidInput("No ID provided".to_string())
-                })?
-                .parse()
-                .map_err(|_| {
-                    println!("Invalid note ID. Usage: noters export <id> [output_path]");
-                    NoterError::InvalidInput("Invalid ID format".to_string())
-                })?;
+            let export_dir = args.get(2).map(PathBuf::from);
+            
+            if let Some(ref dir) = export_dir {
+                if !dir.exists() {
+                    if let Err(e) = fs::create_dir_all(dir) {
+                        println!("Failed to create export directory: {}", e);
+                        return Ok(());
+                    }
+                } else if !dir.is_dir() {
+                    println!("Error: {} is not a directory", dir.display());
+                    return Ok(());
+                }
+            }
 
-            let output_path = args.get(3).map(PathBuf::from);
-            match notes_manager.export_note(id, output_path.as_deref()) {
-                Ok(path) => println!("Note exported successfully to: {}", path.display()),
-                Err(NoterError::NoteNotFound(_)) => println!("Note not found."),
-                Err(e) => println!("Error exporting note: {}", e),
+            match notes_manager.export_notes(export_dir.as_deref()) {
+                Ok((success_count, total_count)) => {
+                    if success_count == 0 && total_count == 0 {
+                        println!("No notes to export.");
+                    } else if success_count == total_count {
+                        println!("Successfully exported all {} notes.", total_count);
+                    } else {
+                        println!("Exported {}/{} notes successfully.", success_count, total_count);
+                        println!("Check the application logs for details about failed exports.");
+                    }
+                }
+                Err(e) => println!("Error during export: {}", e),
             }
         }
         Some("list") => {
@@ -124,10 +135,10 @@ fn main() -> Result<()> {
 fn print_usage() {
     println!("Usage: noters <command> [args]");
     println!("Commands:");
-    println!("  new [title]    Create a new note");
-    println!("  list           List all notes");
-    println!("  delete <id>    Delete a note by ID");
-    println!("  edit <id>      Edit a note in your configured editor");
-    println!("  export <id> [output_path]  Export decrypted note to file");
-    println!("  search <query> Search notes");
+    println!("  new [title]     Create a new note");
+    println!("  list            List all notes");
+    println!("  delete <id>     Delete a note by ID");
+    println!("  edit <id>       Edit a note in your configured editor");
+    println!("  export [dir]    Export all notes to directory (defaults to configured export dir)");
+    println!("  search <query>  Search notes");
 }

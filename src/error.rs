@@ -32,6 +32,9 @@ pub enum NoterError {
     #[error("Editor error: {0}")]
     EditorError(String),
 
+    #[error("Export error: {0}")]
+    ExportError(String),
+
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 }

@@ -3,7 +3,7 @@ use crate::crypto::Crypto;
 use crate::db::{Database, NoteRecord};
 use crate::error::{NoterError, Result};
 use chrono::Local;
-use log::info;
+use log::{info, warn};
 use std::fs;
 use std::path::PathBuf;
 use std::path::Path;
@@ -126,42 +126,77 @@ impl NotesManager {
         }
     }
 
-    pub fn export_notes(&self, export_dir: Option<PathBuf>) -> Result<()> {
-        let target_dir = export_dir.unwrap_or_else(|| self.config.export_dir.clone());
+    pub fn export_notes(&self, export_dir: Option<&Path>) -> Result<(usize, usize)> {
+        let notes = self.list_notes()?;
+        let total_count = notes.len();
+        if total_count == 0 {
+            return Ok((0, 0));
+        }
+
+        let target_dir = match export_dir {
+            Some(dir) => dir.to_path_buf(),
+            None => self.config.export_dir.as_ref()
+                .map(|p| p.clone())
+                .unwrap_or_else(|| self.config.notes_dir.join("exports"))
+        };
+
         fs::create_dir_all(&target_dir)?;
 
-        let notes = self.list_notes()?;
+        let mut success_count = 0;
+        let mut errors = Vec::new();
+
         for note in notes {
-            let source_path = self.notes_dir.join(&note.filename);
-            let target_path = target_dir.join(&note.filename);
-
-            let encrypted = fs::read_to_string(&source_path)?;
-            let decrypted = self
-                .crypto
-                .decrypt(&encrypted)
-                .map_err(|e| NoterError::Encryption(e.to_string()))?;
-
-            fs::write(&target_path, decrypted)?;
-            info!("Exported note: {} to {:?}", note.title, target_path);
+            let safe_title = self.sanitize_filename(&note.title);
+            let export_path = target_dir.join(format!("{}.{}", safe_title, self.config.default_extension));
+            
+            match self.export_note(note.id, &export_path) {
+                Ok(_) => {
+                    success_count += 1;
+                    info!("Exported note '{}' to {}", note.title, export_path.display());
+                }
+                Err(e) => {
+                    warn!("Failed to export note '{}': {}", note.title, e);
+                    errors.push((note.title, e));
+                }
+            }
         }
+
+        if !errors.is_empty() {
+            let error_msg = errors
+                .iter()
+                .map(|(title, err)| format!("- {}: {}", title, err))
+                .collect::<Vec<_>>()
+                .join("\n");
+            warn!("Some notes failed to export:\n{}", error_msg);
+        }
+
+        Ok((success_count, total_count))
+    }
+
+    fn export_note(&self, id: i64, export_path: &Path) -> Result<()> {
+        let content = self.read_note(id).map_err(|e| {
+            NoterError::ExportError(format!("Failed to read note {}: {}", id, e))
+        })?;
+
+        fs::write(export_path, content).map_err(|e| {
+            NoterError::ExportError(format!("Failed to write to {}: {}", export_path.display(), e))
+        })?;
 
         Ok(())
     }
 
-    pub fn export_note(&self, id: i64, output_path: Option<&Path>) -> Result<PathBuf> {
-        let note = self.db.get_note(id)?.ok_or_else(|| NoterError::NoteNotFound(id))?;
-        let content = self.read_note(id)?;
+    fn sanitize_filename(&self, filename: &str) -> String {
+        let safe_chars = filename
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .collect::<String>();
         
-        let output_path = match output_path {
-            Some(path) => path.to_path_buf(),
-            None => {
-                let safe_title = note.title.replace(|c: char| !c.is_alphanumeric() && c != '-', "-");
-                PathBuf::from(format!("{}.{}", safe_title, self.config.default_extension))
-            }
-        };
-
-        fs::write(&output_path, content)?;
-        Ok(output_path)
+        safe_chars
+            .trim_matches('-')
+            .to_string()
+            .chars()
+            .take(255)
+            .collect()
     }
 
     fn format_filename(&self, title: &str) -> String {

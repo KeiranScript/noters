@@ -12,7 +12,7 @@ pub struct Config {
     pub default_extension: String,
     pub editor: Option<String>,
     pub encryption_key: String,
-    pub export_dir: PathBuf,
+    pub export_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -69,7 +69,8 @@ impl Default for Config {
             default_extension: String::from("md"),
             editor: None,
             encryption_key: Self::generate_encryption_key(),
-            export_dir: noters_dir.join("exports"),
+            export_dir: Some(noters_dir.join("exports")),
         }
     }
 }
+
