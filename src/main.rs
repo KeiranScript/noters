@@ -1,23 +1,50 @@
 use noters::{config::Config, error::{Result, NoterError}, note::NotesManager};
+use clap::{Parser, Subcommand};
+use colored::*;
 use std::path::PathBuf;
-use std::env;
-use std::fs;
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    New {
+        #[arg(help = "Title of the new note")]
+        title: Option<String>,
+    },
+    List,
+    Delete {
+        #[arg(help = "ID of the note to delete")]
+        id: i64,
+    },
+    Edit {
+        #[arg(help = "ID of the note to edit")]
+        id: i64,
+    },
+    Export {
+        #[arg(help = "Directory to export notes to")]
+        dir: Option<PathBuf>,
+    },
+    Search {
+        #[arg(help = "Search query")]
+        query: String,
+    },
+}
 
 fn main() -> Result<()> {
     env_logger::init();
     let config = Config::load()?;
     let notes_manager = NotesManager::new(config)?;
 
-    let args: Vec<String> = env::args().collect();
-    let command = args.get(1).map(String::as_str);
+    let cli = Cli::parse();
 
-    match command {
-        Some("new") => {
-            let title = match args.get(2) {
-                Some(t) => t.to_string(),
-                None => noters::utils::get_input("Note title: "),
-            };
-            
+    match cli.command {
+        Some(Commands::New { title }) => {
+            let title = title.unwrap_or_else(|| noters::utils::get_input("Note title: "));
             if let Some(extension) = std::path::Path::new(&title)
                 .extension()
                 .and_then(|ext| ext.to_str())
@@ -29,12 +56,38 @@ fn main() -> Result<()> {
             }
             println!("Note created successfully.");
         }
-        Some("export") => {
-            let export_dir = args.get(2).map(PathBuf::from);
-            
+        Some(Commands::List) => {
+            let notes = notes_manager.list_notes()?;
+            if notes.is_empty() {
+                println!("No notes found.");
+            } else {
+                for note in notes {
+                    println!("[{}] {} ({})", note.id, note.title, note.filename);
+                }
+            }
+        }
+        Some(Commands::Delete { id }) => {
+            match notes_manager.delete_note(id)? {
+                true => println!("Note deleted successfully."),
+                false => println!("Note not found."),
+            }
+        }
+        Some(Commands::Edit { id }) => {
+            match notes_manager.edit_note(id) {
+                Ok(_) => println!("Note edited successfully."),
+                Err(NoterError::EditorNotFound) => {
+                    println!("No editor configured. Set $EDITOR environment variable or specify 'editor' in config.toml");
+                }
+                Err(NoterError::NoteNotFound(_)) => println!("Note not found."),
+                Err(e) => println!("Error editing note: {}", e),
+            }
+        }
+        Some(Commands::Export { dir }) => {
+            let export_dir = dir;
+
             if let Some(ref dir) = export_dir {
                 if !dir.exists() {
-                    if let Err(e) = fs::create_dir_all(dir) {
+                    if let Err(e) = std::fs::create_dir_all(dir) {
                         println!("Failed to create export directory: {}", e);
                         return Ok(());
                     }
@@ -58,71 +111,15 @@ fn main() -> Result<()> {
                 Err(e) => println!("Error during export: {}", e),
             }
         }
-        Some("list") => {
-            let notes = notes_manager.list_notes()?;
-            if notes.is_empty() {
-                println!("No notes found.");
+        Some(Commands::Search { query }) => {
+            let results = notes_manager.search_notes(&query)?;
+            if results.is_empty() {
+                println!("No matching notes found.");
             } else {
-                for note in notes {
+                for note in results {
                     println!("[{}] {} ({})", note.id, note.title, note.filename);
                 }
             }
-        }
-        Some("delete") => {
-            let id: i64 = args.get(2)
-                .ok_or_else(|| {
-                    println!("Usage: noters delete <id>");
-                    NoterError::InvalidInput("No ID provided".to_string())
-                })?
-                .parse()
-                .map_err(|_| {
-                    println!("Invalid note ID. Usage: noters delete <id>");
-                    NoterError::InvalidInput("Invalid ID format".to_string())
-                })?;
-
-            match notes_manager.delete_note(id)? {
-                true => println!("Note deleted successfully."),
-                false => println!("Note not found."),
-            }
-        }
-        Some("edit") => {
-            let id: i64 = args.get(2)
-                .ok_or_else(|| {
-                    println!("Usage: noters edit <id>");
-                    NoterError::InvalidInput("No ID provided".to_string())
-                })?
-                .parse()
-                .map_err(|_| {
-                    println!("Invalid note ID. Usage: noters edit <id>");
-                    NoterError::InvalidInput("Invalid ID format".to_string())
-                })?;
-
-            match notes_manager.edit_note(id) {
-                Ok(_) => println!("Note edited successfully."),
-                Err(NoterError::EditorNotFound) => {
-                    println!("No editor configured. Set $EDITOR environment variable or specify 'editor' in config.toml");
-                }
-                Err(NoterError::NoteNotFound(_)) => println!("Note not found."),
-                Err(e) => println!("Error editing note: {}", e),
-            }
-        }
-        Some("search") => {
-            if let Some(query) = args.get(2) {
-                let results = notes_manager.search_notes(query)?;
-                if results.is_empty() {
-                    println!("No matching notes found.");
-                } else {
-                    for note in results {
-                        println!("[{}] {} ({})", note.id, note.title, note.filename);
-                    }
-                }
-            } else {
-                println!("Usage: noters search <query>");
-            }
-        }
-        Some(cmd) => {
-            println!("Unknown command: {}", cmd);
-            print_usage();
         }
         None => {
             print_usage();
@@ -133,12 +130,24 @@ fn main() -> Result<()> {
 }
 
 fn print_usage() {
-    println!("Usage: noters <command> [args]");
-    println!("Commands:");
-    println!("  new [title]     Create a new note");
-    println!("  list            List all notes");
-    println!("  delete <id>     Delete a note by ID");
-    println!("  edit <id>       Edit a note in your configured editor");
-    println!("  export [dir]    Export all notes to directory (defaults to configured export dir)");
-    println!("  search <query>  Search notes");
+    const USAGE: &str = "Usage: noters <command> [args]";
+    const COMMANDS: &[(&str, &str)] = &[
+        ("new [title]", "Create a new note"),
+        ("list", "List all notes"),
+        ("delete <id>", "Delete a note by ID"),
+        ("edit <id>", "Edit a note in your configured editor"),
+        ("export [dir]", "Export all notes to directory (defaults to configured export dir)"),
+        ("search <query>", "Search notes"),
+    ];
+
+    println!("\n{}", "╭─────────────────────────────────────╮".bright_blue());
+    println!("{} {} {}", "│".bright_blue(), USAGE.bright_white().bold(), "│".bright_blue());
+    println!("{}", "╰─────────────────────────────────────╯".bright_blue());
+    
+    println!("\n{}", "Commands:".bright_yellow().bold());
+    
+    for (cmd, description) in COMMANDS {
+        println!("  {} {:<15} │ {}", "►".bright_green(), cmd.bright_cyan(), description);
+    }
+    println!("");
 }
