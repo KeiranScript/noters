@@ -125,6 +125,28 @@ impl NotesManager {
         }
     }
 
+    pub fn export_notes(&self, export_dir: Option<PathBuf>) -> Result<()> {
+        let target_dir = export_dir.unwrap_or_else(|| self.config.export_dir.clone());
+        fs::create_dir_all(&target_dir)?;
+
+        let notes = self.list_notes()?;
+        for note in notes {
+            let source_path = self.notes_dir.join(&note.filename);
+            let target_path = target_dir.join(&note.filename);
+
+            let encrypted = fs::read_to_string(&source_path)?;
+            let decrypted = self
+                .crypto
+                .decrypt(&encrypted)
+                .map_err(|e| NoterError::Encryption(e.to_string()))?;
+
+            fs::write(&target_path, decrypted)?;
+            info!("Exported note: {} to {:?}", note.title, target_path);
+        }
+
+        Ok(())
+    }
+
     fn format_filename(&self, title: &str) -> String {
         let safe_title = title.replace(|c: char| !c.is_alphanumeric() && c != '-', "-");
         let timestamp = Local::now().format("%Y%m%d-%H%M%S");

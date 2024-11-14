@@ -31,8 +31,12 @@ fn main() -> Result<()> {
         }
         Some("list") => {
             let notes = notes_manager.list_notes()?;
-            for note in notes {
-                println!("[{}] {} ({})", note.id, note.title, note.filename);
+            if notes.is_empty() {
+                println!("No notes found.");
+            } else {
+                for note in notes {
+                    println!("[{}] {} ({})", note.id, note.title, note.filename);
+                }
             }
         }
         Some("delete") => {
@@ -69,29 +73,44 @@ fn main() -> Result<()> {
                 Err(NoterError::EditorNotFound) => {
                     println!("No editor configured. Set $EDITOR environment variable or specify 'editor' in config.toml");
                 }
-                Err(e) => println!("Error editing note: {:?}", e),
+                Err(NoterError::NoteNotFound(_)) => {
+                    println!("Note not found.");
+                }
+                Err(e) => println!("Error editing note: {}", e),
             }
         }
         Some("search") => {
             if let Some(query) = args.get(2) {
                 let results = notes_manager.search_notes(query)?;
-                for note in results {
-                    println!("[{}] {} ({})", note.id, note.title, note.filename);
+                if results.is_empty() {
+                    println!("No matching notes found.");
+                } else {
+                    for note in results {
+                        println!("[{}] {} ({})", note.id, note.title, note.filename);
+                    }
                 }
             } else {
                 println!("Usage: noters search <query>");
             }
         }
-        _ => {
-            println!("Usage: noters <command> [args]");
-            println!("Commands:");
-            println!("  new [title]    Create a new note");
-            println!("  list           List all notes");
-            println!("  delete <id>    Delete a note by ID");
-            println!("  edit <id>      Edit a note in your configured editor");
-            println!("  search <query> Search notes");
+        Some(cmd) => {
+            println!("Unknown command: {}", cmd);
+            print_usage();
+        }
+        None => {
+            print_usage();
         }
     }
 
     Ok(())
+}
+
+fn print_usage() {
+    println!("Usage: noters <command> [args]");
+    println!("Commands:");
+    println!("  new [title]    Create a new note");
+    println!("  list           List all notes");
+    println!("  delete <id>    Delete a note by ID");
+    println!("  edit <id>      Edit a note in your configured editor");
+    println!("  search <query> Search notes");
 }
