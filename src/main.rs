@@ -1,4 +1,5 @@
 use noters::{config::Config, error::{Result, NoterError}, note::NotesManager};
+use std::path::PathBuf;
 use std::env;
 
 fn main() -> Result<()> {
@@ -16,18 +17,35 @@ fn main() -> Result<()> {
                 None => noters::utils::get_input("Note title: "),
             };
             
-            // If title ends with an extension, use it instead of the default
             if let Some(extension) = std::path::Path::new(&title)
                 .extension()
                 .and_then(|ext| ext.to_str())
             {
-                // Strip the extension for the title but keep it for the file
                 let title_without_ext = title.trim_end_matches(&format!(".{}", extension));
                 notes_manager.create_note(title_without_ext)?;
             } else {
                 notes_manager.create_note(&title)?;
             }
             println!("Note created successfully.");
+        }
+        Some("export") => {
+            let id: i64 = args.get(2)
+                .ok_or_else(|| {
+                    println!("Usage: noters export <id> [output_path]");
+                    NoterError::InvalidInput("No ID provided".to_string())
+                })?
+                .parse()
+                .map_err(|_| {
+                    println!("Invalid note ID. Usage: noters export <id> [output_path]");
+                    NoterError::InvalidInput("Invalid ID format".to_string())
+                })?;
+
+            let output_path = args.get(3).map(PathBuf::from);
+            match notes_manager.export_note(id, output_path.as_deref()) {
+                Ok(path) => println!("Note exported successfully to: {}", path.display()),
+                Err(NoterError::NoteNotFound(_)) => println!("Note not found."),
+                Err(e) => println!("Error exporting note: {}", e),
+            }
         }
         Some("list") => {
             let notes = notes_manager.list_notes()?;
@@ -73,9 +91,7 @@ fn main() -> Result<()> {
                 Err(NoterError::EditorNotFound) => {
                     println!("No editor configured. Set $EDITOR environment variable or specify 'editor' in config.toml");
                 }
-                Err(NoterError::NoteNotFound(_)) => {
-                    println!("Note not found.");
-                }
+                Err(NoterError::NoteNotFound(_)) => println!("Note not found."),
                 Err(e) => println!("Error editing note: {}", e),
             }
         }
@@ -112,5 +128,6 @@ fn print_usage() {
     println!("  list           List all notes");
     println!("  delete <id>    Delete a note by ID");
     println!("  edit <id>      Edit a note in your configured editor");
+    println!("  export <id> [output_path]  Export decrypted note to file");
     println!("  search <query> Search notes");
 }

@@ -6,6 +6,7 @@ use chrono::Local;
 use log::info;
 use std::fs;
 use std::path::PathBuf;
+use std::path::Path;
 
 pub struct NotesManager {
     config: Config,
@@ -145,6 +146,22 @@ impl NotesManager {
         }
 
         Ok(())
+    }
+
+    pub fn export_note(&self, id: i64, output_path: Option<&Path>) -> Result<PathBuf> {
+        let note = self.db.get_note(id)?.ok_or_else(|| NoterError::NoteNotFound(id))?;
+        let content = self.read_note(id)?;
+        
+        let output_path = match output_path {
+            Some(path) => path.to_path_buf(),
+            None => {
+                let safe_title = note.title.replace(|c: char| !c.is_alphanumeric() && c != '-', "-");
+                PathBuf::from(format!("{}.{}", safe_title, self.config.default_extension))
+            }
+        };
+
+        fs::write(&output_path, content)?;
+        Ok(output_path)
     }
 
     fn format_filename(&self, title: &str) -> String {
